@@ -26,7 +26,6 @@ static void beforeGeneration(UA_Server *server, const UA_NodeId *sessionId, void
 static void afterGeneration(UA_Server *server, const UA_NodeId *sessionId, void *sessionContext,
                             const UA_NodeId *nodeId, void *nodeContext, const UA_NumericRange *range,
                             const UA_DataValue *data);
-}
 
 static void addValueCallbackToGeneratedVariable(UA_Server *server);
 
