@@ -34,7 +34,7 @@ static void addGeneratedVariable(UA_Server *server) {
   UA_Server_addVariableNode(server, currentNodeId, parentNodeId, parentReferenceNodeId, currentName, variableTypeNodeId,
                             attr, NULL, NULL);
 
-  updateValue(server);
+  generateValue(server);
 }
 
 /**
