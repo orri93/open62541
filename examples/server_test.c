@@ -7,9 +7,9 @@
 #define UA_TUTORIAL_GOS_TEST_VALUE_DISPLAY_NAME "Test value"
 #define UA_TUTORIAL_GOS_TEST_VALUE_TYPE UA_TYPES_DOUBLE
 
-static UA_Double generate() { return (UA_Double)(rand()); }
+static UA_Double generate(void) { return (UA_Double)(rand()); }
 
-static UA_Double defaultValue() { return (UA_Double)(0.0); }
+static UA_Double defaultValue(void) { return (UA_Double)(0.0); }
 
 static void generateValue(UA_Server *server) {
   UA_Double real = generate();
