@@ -44,6 +44,8 @@ add_example(tutorial_client_firststeps tutorial_client_firststeps.c)
 
 add_example(tutorial_client_events tutorial_client_events.c)
 
+add_example(server_test server_test.c)
+
 ##################
 # Example Server #
 ##################
