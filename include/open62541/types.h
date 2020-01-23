@@ -104,16 +104,16 @@ typedef uint32_t UA_UInt32;
  * An integer value between -9 223 372 036 854 775 808 and
  * 9 223 372 036 854 775 807. */
 typedef int64_t UA_Int64;
-#define UA_INT64_MIN ((int64_t)-9223372036854775808)
-#define UA_INT64_MAX (int64_t)9223372036854775807
+#define UA_INT64_MAX (int64_t)9223372036854775807LL
+#define UA_INT64_MIN ((int64_t)-UA_INT64_MAX-1LL)
 
 /**
  * UInt64
  * ^^^^^^
  * An integer value between 0 and 18 446 744 073 709 551 615. */
 typedef uint64_t UA_UInt64;
-#define UA_UINT64_MIN (int64_t)0
-#define UA_UINT64_MAX (int64_t)18446744073709551615
+#define UA_UINT64_MIN (uint64_t)0
+#define UA_UINT64_MAX (uint64_t)18446744073709551615ULL
 
 /**
  * Float
@@ -187,8 +187,12 @@ UA_STRING(char *chars) {
  * which represents the number of 100 nanosecond intervals since January 1, 1601
  * (UTC).
  *
- * The methods providing an interface to the system clock are provided by a
- * "plugin" that is statically linked with the library. */
+ * The methods providing an interface to the system clock are architecture-
+ * specific. Usually, they provide a UTC clock that includes leap seconds. The
+ * OPC UA standard allows the use of International Atomic Time (TAI) for the
+ * DateTime instead. But this is still unusual and not implemented for most
+ * SDKs. Currently (2019), UTC and TAI are 37 seconds apart due to leap
+ * seconds. */
 
 typedef int64_t UA_DateTime;
 
@@ -215,12 +219,13 @@ typedef struct UA_DateTimeStruct {
     UA_UInt16 sec;
     UA_UInt16 min;
     UA_UInt16 hour;
-    UA_UInt16 day;
-    UA_UInt16 month;
+    UA_UInt16 day;   /* From 1 to 31 */
+    UA_UInt16 month; /* From 1 to 12 */
     UA_UInt16 year;
 } UA_DateTimeStruct;
 
 UA_DateTimeStruct UA_EXPORT UA_DateTime_toStruct(UA_DateTime t);
+UA_DateTime UA_EXPORT UA_DateTime_fromStruct(UA_DateTimeStruct ts);
 
 /* The C99 standard (7.23.1) says: "The range and precision of times
  * representable in clock_t and time_t are implementation-defined." On most
@@ -325,7 +330,17 @@ UA_EXPORT extern const UA_NodeId UA_NODEID_NULL;
 
 UA_Boolean UA_EXPORT UA_NodeId_isNull(const UA_NodeId *p);
 
-UA_Boolean UA_EXPORT UA_NodeId_equal(const UA_NodeId *n1, const UA_NodeId *n2);
+UA_Order UA_EXPORT UA_NodeId_order(const UA_NodeId *n1, const UA_NodeId *n2);
+
+static UA_INLINE UA_Boolean
+UA_NodeId_equal(const UA_NodeId *n1, const UA_NodeId *n2) {
+    return (UA_NodeId_order(n1, n2) == UA_ORDER_EQ);
+}
+
+/* Returns a non-cryptographic hash for the String.
+ * Uses FNV non-cryptographic hash function. See
+ * https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function */
+UA_UInt32 UA_EXPORT UA_ByteString_hash(UA_UInt32 initialHashValue, const UA_Byte *data, size_t size);
 
 /* Returns a non-cryptographic hash for the NodeId */
 UA_UInt32 UA_EXPORT UA_NodeId_hash(const UA_NodeId *n);
@@ -383,10 +398,18 @@ typedef struct {
     UA_UInt32 serverIndex;
 } UA_ExpandedNodeId;
 
-UA_Boolean UA_EXPORT UA_ExpandedNodeId_equal(const UA_ExpandedNodeId *n1,
-                                             const UA_ExpandedNodeId *n2);
-
 UA_EXPORT extern const UA_ExpandedNodeId UA_EXPANDEDNODEID_NULL;
+
+UA_Order UA_EXPORT
+UA_ExpandedNodeId_order(const UA_ExpandedNodeId *n1, const UA_ExpandedNodeId *n2);
+
+static UA_INLINE UA_Boolean
+UA_ExpandedNodeId_equal(const UA_ExpandedNodeId *n1, const UA_ExpandedNodeId *n2) {
+    return (UA_ExpandedNodeId_order(n1, n2) == UA_ORDER_EQ);
+}
+
+/* Returns a non-cryptographic hash for the NodeId */
+UA_UInt32 UA_EXPORT UA_ExpandedNodeId_hash(const UA_ExpandedNodeId *n);
 
 /** The following functions are shorthand for creating ExpandedNodeIds. */
 static UA_INLINE UA_ExpandedNodeId
@@ -783,7 +806,7 @@ typedef struct UA_DiagnosticInfo {
  * type operations as static inline functions. */
 
 typedef struct {
-#ifdef UA_ENABLE_TYPENAMES
+#ifdef UA_ENABLE_TYPEDESCRIPTION
     const char *memberName;
 #endif
     UA_UInt16 memberTypeIndex;    /* Index of the member in the array of data
@@ -839,7 +862,7 @@ typedef enum {
 } UA_DataTypeKind;
 
 struct UA_DataType {
-#ifdef UA_ENABLE_TYPENAMES
+#ifdef UA_ENABLE_TYPEDESCRIPTION
     const char *typeName;
 #endif
     UA_NodeId typeId;                /* The nodeid of the type */
@@ -851,7 +874,7 @@ struct UA_DataType {
     UA_UInt32 overlayable      : 1;  /* The type has the identical memory layout
                                       * in memory and on the binary stream. */
     UA_UInt32 membersSize      : 8;  /* How many members does the type have? */
-    UA_UInt32 binaryEncodingId : 16; /* NodeId of datatype when encoded as binary */
+    UA_UInt32 binaryEncodingId;      /* NodeId of datatype when encoded as binary */
     //UA_UInt16  xmlEncodingId;      /* NodeId of datatype when encoded as XML */
     UA_DataTypeMember *members;
 };
@@ -961,7 +984,7 @@ void UA_EXPORT UA_Array_delete(void *p, size_t size, const UA_DataType *type);
 /**
  * Random Number Generator
  * -----------------------
- * If UA_ENABLE_MULTITHREADING is defined, then the seed is stored in thread
+ * If UA_MULTITHREADING is defined, then the seed is stored in thread
  * local storage. The seed is initialized for every thread in the
  * server/client. */
 void UA_EXPORT UA_random_seed(UA_UInt64 seed);
@@ -979,7 +1002,7 @@ UA_Guid UA_EXPORT UA_Guid_random(void);     /* no cryptographic entropy */
 
 /* The following is used to exclude type names in the definition of UA_DataType
  * structures if the feature is disabled. */
-#ifdef UA_ENABLE_TYPENAMES
+#ifdef UA_ENABLE_TYPEDESCRIPTION
 # define UA_TYPENAME(name) name,
 #else
 # define UA_TYPENAME(name)

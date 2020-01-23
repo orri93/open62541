@@ -101,7 +101,7 @@ START_TEST(Client_endpoints) {
     UA_StatusCode retval = UA_Client_getEndpoints(client, "opc.tcp://localhost:4840",
                                                   &endpointArraySize, &endpointArray);
     ck_assert_uint_eq(retval, UA_STATUSCODE_GOOD);
-    ck_assert_msg(endpointArraySize > 0);
+    ck_assert(endpointArraySize > 0);
 
     UA_Array_delete(endpointArray,endpointArraySize, &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
 
@@ -134,7 +134,7 @@ START_TEST(Client_endpoints_empty) {
 
     ck_assert_uint_eq(response.responseHeader.serviceResult, UA_STATUSCODE_GOOD);
 
-    ck_assert_msg(response.endpointsSize > 0);
+    ck_assert(response.endpointsSize > 0);
 
     UA_GetEndpointsResponse_deleteMembers(&response);
     UA_GetEndpointsRequest_deleteMembers(&request);
@@ -171,11 +171,15 @@ START_TEST(Client_renewSecureChannel) {
     UA_ClientConfig *cc = UA_Client_getConfig(client);
     UA_fakeSleep((UA_UInt32)((UA_Double)cc->secureChannelLifeTime * 0.8));
 
+    /* Make the client renew the channel */
+    retval = UA_Client_run_iterate(client, 0);
+    ck_assert_uint_eq(retval, UA_STATUSCODE_GOOD);
+
     /* Now read */
     UA_Variant val;
     UA_NodeId nodeId = UA_NODEID_STRING(1, "my.variable");
     retval = UA_Client_readValueAttribute(client, nodeId, &val);
-    ck_assert_uint_eq(retval, UA_STATUSCODE_GOOD);
+    ck_assert_msg(retval == UA_STATUSCODE_GOOD, UA_StatusCode_name(retval));
     UA_Variant_deleteMembers(&val);
 
     UA_Client_disconnect(client);
@@ -193,7 +197,12 @@ START_TEST(Client_renewSecureChannelWithActiveSubscription) {
     ck_assert_uint_eq(retval, UA_STATUSCODE_GOOD);
 
     UA_CreateSubscriptionRequest request = UA_CreateSubscriptionRequest_default();
-    request.requestedLifetimeCount = 1000;
+    /* Force the server to send keep alive responses every second to trigg
+     * the client to send new publish requests. Requests from the client
+     * will make the server to change to the new SecurityToken after renewal.
+     */
+    request.requestedPublishingInterval = 1000;
+    request.requestedMaxKeepAliveCount = 1;
     UA_CreateSubscriptionResponse response = UA_Client_Subscriptions_create(client, request,
                                                                             NULL, NULL, NULL);
 
@@ -243,7 +252,7 @@ END_TEST
 START_TEST(Client_delete_without_connect) {
     UA_Client *client = UA_Client_new();
     UA_ClientConfig_setDefault(UA_Client_getConfig(client));
-    ck_assert_msg(client != NULL);
+    ck_assert(client != NULL);
     UA_Client_delete(client);
 }
 END_TEST

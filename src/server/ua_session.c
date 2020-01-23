@@ -23,31 +23,33 @@ void UA_Session_init(UA_Session *session) {
 }
 
 void UA_Session_deleteMembersCleanup(UA_Session *session, UA_Server* server) {
+    UA_LOCK_ASSERT(server->serviceMutex, 1);
     UA_Session_detachFromSecureChannel(session);
     UA_ApplicationDescription_deleteMembers(&session->clientDescription);
     UA_NodeId_deleteMembers(&session->header.authenticationToken);
     UA_NodeId_deleteMembers(&session->sessionId);
     UA_String_deleteMembers(&session->sessionName);
     UA_ByteString_deleteMembers(&session->serverNonce);
-    struct ContinuationPointEntry *cp, *temp;
-    LIST_FOREACH_SAFE(cp, &session->continuationPoints, pointers, temp) {
-        LIST_REMOVE(cp, pointers);
-        UA_ByteString_deleteMembers(&cp->identifier);
-        UA_BrowseDescription_deleteMembers(&cp->browseDescription);
+    struct ContinuationPoint *cp, *next = session->continuationPoints;
+    while((cp = next)) {
+        next = ContinuationPoint_clear(cp);
         UA_free(cp);
     }
+    session->continuationPoints = NULL;
+    session->availableContinuationPoints = UA_MAXCONTINUATIONPOINTS;
 }
 
 void UA_Session_attachToSecureChannel(UA_Session *session, UA_SecureChannel *channel) {
-    LIST_INSERT_HEAD(&channel->sessions, &session->header, pointers);
+    UA_Session_detachFromSecureChannel(session);
     session->header.channel = channel;
+    channel->session = &session->header;
 }
 
 void UA_Session_detachFromSecureChannel(UA_Session *session) {
     if(!session->header.channel)
         return;
+    session->header.channel->session = NULL;
     session->header.channel = NULL;
-    LIST_REMOVE(&session->header, pointers);
 }
 
 UA_StatusCode
@@ -87,6 +89,8 @@ void UA_Session_addSubscription(UA_Server *server, UA_Session *session, UA_Subsc
 UA_StatusCode
 UA_Session_deleteSubscription(UA_Server *server, UA_Session *session,
                               UA_UInt32 subscriptionId) {
+    UA_LOCK_ASSERT(server->serviceMutex, 1);
+
     UA_Subscription *sub = UA_Session_getSubscriptionById(session, subscriptionId);
     if(!sub)
         return UA_STATUSCODE_BADSUBSCRIPTIONIDINVALID;

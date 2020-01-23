@@ -50,7 +50,8 @@ typedef enum {
     UA_ATTRIBUTEID_MINIMUMSAMPLINGINTERVAL = 19,
     UA_ATTRIBUTEID_HISTORIZING             = 20,
     UA_ATTRIBUTEID_EXECUTABLE              = 21,
-    UA_ATTRIBUTEID_USEREXECUTABLE          = 22
+    UA_ATTRIBUTEID_USEREXECUTABLE          = 22,
+    UA_ATTRIBUTEID_DATATYPEDEFINITION      = 23
 } UA_AttributeId;
 
 /**
@@ -112,11 +113,8 @@ typedef enum {
 #define UA_VALUERANK_THREE_DIMENSIONS          3
 
 /**
- * General Configuration Constants
- * ===============================
- *
- * This section defines constants that are used for the configuration of both
- * clients and servers.
+ * Internal Constants
+ * ==================
  *
  * Rule Handling
  * -------------
@@ -132,6 +130,19 @@ typedef enum {
     UA_RULEHANDLING_WARN,   /* Print a message in the logs and continue */
     UA_RULEHANDLING_ACCEPT, /* Continue and disregard the broken rule */
 } UA_RuleHandling;
+
+/**
+ * Order
+ * -----
+ *
+ * The Order enum is used to establish an absolute ordering between elements.
+ */
+
+typedef enum {
+    UA_ORDER_LESS = -1,
+    UA_ORDER_EQ = 0,
+    UA_ORDER_MORE = 1
+} UA_Order;
 
 _UA_END_DECLS
 

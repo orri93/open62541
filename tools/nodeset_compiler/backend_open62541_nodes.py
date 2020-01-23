@@ -1,23 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-###
-### Author:  Chris Iatrou (ichrispa@core-vector.net)
-### Version: rev 13
-###
-### This program was created for educational purposes and has been
-### contributed to the open62541 project by the author. All licensing
-### terms for this source is inherited by the terms and conditions
-### specified for by the open62541 project (see the projects readme
-### file for more information on the LGPL terms and restrictions).
-###
-### This program is not meant to be used in a production environment. The
-### author is not liable for any complications arising due to the use of
-### this program.
-###
+### This Source Code Form is subject to the terms of the Mozilla Public
+### License, v. 2.0. If a copy of the MPL was not distributed with this
+### file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from nodes import *
-from backend_open62541_datatypes import *
+###    Copyright 2014-2015 (c) TU-Dresden (Author: Chris Iatrou)
+###    Copyright 2014-2017 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
+###    Copyright 2016-2017 (c) Stefan Profanter, fortiss GmbH
+###    Copyright 2019 (c) Andrea Minosu
+###    Copyright 2018 (c) Jannis Volker
+###    Copyright 2018 (c) Ralph Lange
+
+from datatypes import  ExtensionObject, NodeId, StatusCode, DiagnosticInfo, Guid, Value
+from nodes import ReferenceTypeNode, ObjectNode, VariableNode, VariableTypeNode, MethodNode, ObjectTypeNode, DataTypeNode, ViewNode
+from backend_open62541_datatypes import makeCIdentifier, generateLocalizedTextCode, generateQualifiedNameCode, generateNodeIdCode, \
+    generateExpandedNodeIdCode, generateNodeValueCode
 import re
 import logging
 
@@ -78,7 +76,7 @@ def generateObjectNodeCode(node):
 def setNodeDatatypeRecursive(node, nodeset):
 
     if not isinstance(node, VariableNode) and not isinstance(node, VariableTypeNode):
-        raise RuntimeError("DataType can only be set for VariableNode and VariableTypeNode")
+        raise RuntimeError("Node {}: DataType can only be set for VariableNode and VariableTypeNode".format(str(node.id)))
 
     if node.dataType is not None:
         return
@@ -110,7 +108,7 @@ def setNodeDatatypeRecursive(node, nodeset):
 def setNodeValueRankRecursive(node, nodeset):
 
     if not isinstance(node, VariableNode) and not isinstance(node, VariableTypeNode):
-        raise RuntimeError("ValueRank can only be set for VariableNode and VariableTypeNode")
+        raise RuntimeError("Node {}: ValueRank can only be set for VariableNode and VariableTypeNode".format(str(node.id)))
 
     if node.valueRank is not None:
         return
@@ -127,6 +125,10 @@ def setNodeValueRankRecursive(node, nodeset):
         if typeDefNode is None:
             # Use the parent type.
             raise RuntimeError("Cannot get node for HasTypeDefinition of VariableNode " + node.browseName.name + " " + str(node.id))
+        if not isinstance(typeDefNode, VariableTypeNode):
+            raise RuntimeError("Node {} ({}) has an invalid type definition. {} is not a VariableType node.".format(
+                str(node.id), node.browseName.name, str(typeDefNode.id)))
+
 
         setNodeValueRankRecursive(typeDefNode, nodeset)
 
@@ -136,6 +138,9 @@ def setNodeValueRankRecursive(node, nodeset):
             # Default value
             node.valueRank = -1
     else:
+        if node.parent is None:
+            raise RuntimeError("Node {}: does not have a parent. Probably the parent node was blacklisted?".format(str(node.id)))
+
         # Check if parent node limits the value rank
         setNodeValueRankRecursive(node.parent, nodeset)
 
@@ -191,7 +196,11 @@ def generateCommonVariableCode(node, nodeset):
             code += code1
             codeCleanup += codeCleanup1
             codeGlobal += codeGlobal1
-            if node.valueRank is not None and node.valueRank > 0 and len(node.arrayDimensions) == node.valueRank and len(node.value.value) > 0:
+            # #1978 Variant arrayDimensions are only required to properly decode multidimensional arrays
+            # (valueRank > 1) from data stored as one-dimensional array of arrayLength elements.
+            # One-dimensional arrays are already completely defined by arraylength attribute so setting
+            # also arrayDimensions, even if not explicitly forbidden, can confuse clients
+            if node.valueRank is not None and node.valueRank > 1 and len(node.arrayDimensions) == node.valueRank and len(node.value.value) > 0:
                 numElements = 1
                 hasZero = False
                 for v in node.arrayDimensions:
@@ -203,11 +212,9 @@ def generateCommonVariableCode(node, nodeset):
                 if hasZero == False and len(node.value.value) == numElements:
                     code.append("attr.value.arrayDimensionsSize = attr.arrayDimensionsSize;")
                     code.append("attr.value.arrayDimensions = attr.arrayDimensions;")
-                    logger.warning("printing arrayDimensions")
-                else:
-                    logger.error("Dimension with size 0 or value count mismatch detected, ArrayDimensions won't be copied to the Value attribute.")
     elif node.value is not None:
-        raise RuntimeError("Cannot encode dataTypeNode: " + dataTypeNode.browseName.name + " for value of node " + node.browseName.name + " " + str(node.id))
+        code.append("/* Cannot encode the value */")
+        logger.warn("Cannot encode dataTypeNode: " + dataTypeNode.browseName.name + " for value of node " + node.browseName.name + " " + str(node.id))
 
     return [code, codeCleanup, codeGlobal]
 
@@ -254,10 +261,14 @@ def generateExtensionObjectSubtypeCode(node, parent, nodeset, global_var_code, i
     codeCleanup = [""]
 
     logger.debug("Building extensionObject for " + str(parent.id))
-    logger.debug("Value    " + str(node.value))
     logger.debug("Encoding " + str(node.encodingRule))
 
-    typeBrowseNode = makeCIdentifier(nodeset.getDataTypeNode(parent.dataType).browseName.name)
+    parentDataType = nodeset.getDataTypeNode(parent.dataType)
+    parentDataTypeName = nodeset.getDataTypeNode(parent.dataType).browseName.name
+    if parentDataType.symbolicName is not None and parentDataType.symbolicName.value is not None:
+        parentDataTypeName = parentDataType.symbolicName.value
+
+    typeBrowseNode = makeCIdentifier(parentDataTypeName)
     #TODO: review this
     if typeBrowseNode == "NumericRange":
         # in the stack we define a separate structure for the numeric range, but
@@ -270,52 +281,54 @@ def generateExtensionObjectSubtypeCode(node, parent, nodeset, global_var_code, i
         instanceName = generateNodeValueInstanceName(node, parent, 0)
         code.append("UA_STACKARRAY(" + typeString + ", " + instanceName + ", 1);")
     typeArr = nodeset.getDataTypeNode(parent.dataType).typesArray
-    typeString = nodeset.getDataTypeNode(parent.dataType).browseName.name.upper()
-    typeArrayString = typeArr + "[" + typeArr + "_" + typeString + "]"
+    typeArrayString = typeArr + "[" + typeArr + "_" + parentDataTypeName.upper() + "]"
     code.append("UA_init({ref}{instanceName}, &{typeArrayString});".format(ref="&" if isArrayElement else "",
                                                                            instanceName=instanceName,
                                                                            typeArrayString=typeArrayString))
 
     # Assign data to the struct contents
     # Track the encoding rule definition to detect arrays and/or ExtensionObjects
-    encFieldIdx = 0
-    for subv in node.value:
-        encField = node.encodingRule[encFieldIdx]
-        encFieldIdx = encFieldIdx + 1
+    values = node.value
+    if values == None:
+        values = []
+    for idx,subv in enumerate(values):
+        encField = node.encodingRule[idx]
         memberName = lowerFirstChar(encField[0])
+
+        # Check if this is an array
+        accessor = "." if isArrayElement else "->"
+
         if isinstance(subv, list):
             if len(subv) == 0:
                 continue
             logger.info("ExtensionObject contains array")
             memberName = lowerFirstChar(encField[0])
             encTypeString = "UA_" + subv[0].__class__.__name__
-            code.append("UA_STACKARRAY(" + encTypeString + ", " + instanceName + "_" + memberName+", {0});".format(len(subv)))
+            instanceNameSafe = makeCIdentifier(instanceName)
+            code.append("UA_STACKARRAY(" + encTypeString + ", " + instanceNameSafe + "_" + memberName+", {0});".format(len(subv)))
             encTypeArr = nodeset.getDataTypeNode(subv[0].__class__.__name__).typesArray
             encTypeArrayString = encTypeArr + "[" + encTypeArr + "_" + subv[0].__class__.__name__.upper() + "]"
-            code.append("UA_init({ref}{instanceName}, &{typeArrayString});".format(ref="&" if isArrayElement else "",
-                                                                                instanceName=instanceName + "_" + memberName,
-                                                                                typeArrayString=encTypeArrayString))
+            code.append("UA_init({instanceName}, &{typeArrayString});".format(instanceName=instanceNameSafe + "_" + memberName,
+                                                                              typeArrayString=encTypeArrayString))
 
-            subArrayIdx = 0
-            for val in subv:
-                code.append(generateNodeValueCode(instanceName + "_" + memberName + "[" + str(subArrayIdx) + "]" +" = ", val, instanceName,instanceName + "_gehtNed_member", global_var_code, asIndirect=False))
-                subArrayIdx = subArrayIdx + 1
-            code.append(instanceName + "->" + memberName + " = " + instanceName+"_"+ memberName+";")
+            for subArrayIdx,val in enumerate(subv):
+                code.append(generateNodeValueCode(instanceNameSafe + "_" + memberName + "[" + str(subArrayIdx) + "]",
+                                                  val, instanceName,instanceName + "_gehtNed_member", global_var_code, asIndirect=False))
+            code.append(instanceName + accessor + memberName + "Size = {0};".format(len(subv)))
+            code.append(instanceName + accessor + memberName + " = " + instanceNameSafe+"_"+ memberName+";")
             continue
-        else:
-            logger.debug(
-            "Encoding of field " + memberName + " is " + str(subv.encodingRule) + "defined by " + str(encField))
-        # Check if this is an array
-        accessor = "." if isArrayElement else "->"
 
-
+        logger.debug("Encoding of field " + memberName + " is " + str(subv.encodingRule) + "defined by " + str(encField))
         if subv.valueRank is None or subv.valueRank == 0:
-            valueName = instanceName + accessor + memberName
-            code.append(generateNodeValueCode(valueName + " = " ,
-                        subv, instanceName,valueName, global_var_code, asIndirect=False))
+            if not subv.isNone():
+                # Some values can be optional
+                valueName = instanceName + accessor + memberName
+                code.append(generateNodeValueCode(valueName,
+                            subv, instanceName,valueName, global_var_code, asIndirect=False))
         else:
             memberName = lowerFirstChar(encField[0])
-            code.append(generateNodeValueCode(instanceName + accessor + memberName + "Size = ", subv, instanceName,valueName, global_var_code, asIndirect=False))
+            code.append(generateNodeValueCode(instanceName + accessor + memberName + "Size", subv,
+                                              instanceName,valueName, global_var_code, asIndirect=False))
 
     if not isArrayElement:
         code.append("UA_Variant_setScalar(&attr.value, " + instanceName + ", &" + typeArrayString + ");")
@@ -385,7 +398,7 @@ def generateValueCode(node, parentNode, nodeset, bootstrapping=True):
                     logger.debug("Building extObj array index " + str(idx))
                     instanceName = valueName + "[" + str(idx) + "]"
                     [code1, codeCleanup1] = generateExtensionObjectSubtypeCode(v, parent=parentNode, nodeset=nodeset,
-                                                                                global_var_code=codeGlobal, instanceName=instanceName,
+                                                                               global_var_code=codeGlobal, instanceName=instanceName,
                                                                                isArrayElement=True)
                     code = code + code1
                     codeCleanup = codeCleanup + codeCleanup1
@@ -394,7 +407,7 @@ def generateValueCode(node, parentNode, nodeset, bootstrapping=True):
                 for idx, v in enumerate(node.value):
                     instanceName = generateNodeValueInstanceName(v, parentNode, idx)
                     code.append(generateNodeValueCode(
-                        valueName + "[" + str(idx) + "] = " , v, instanceName, valueName, codeGlobal))
+                        valueName + "[" + str(idx) + "]" , v, instanceName, valueName, codeGlobal))
             code.append("UA_Variant_setArray(&attr.value, &" + valueName +
                         ", (UA_Int32) " + str(len(node.value)) + ", " + "&" +
                         dataTypeNode.typesArray + "["+dataTypeNode.typesArray + "_" + getTypeBrowseName(dataTypeNode).upper() +"]);")
@@ -410,15 +423,17 @@ def generateValueCode(node, parentNode, nodeset, bootstrapping=True):
         else:
             # The following strategy applies to all other types, in particular strings and numerics.
             if isinstance(node.value[0], ExtensionObject):
-                [code1, codeCleanup1] = generateExtensionObjectSubtypeCode(node.value[0], parent=parentNode, nodeset=nodeset, global_var_code=codeGlobal, isArrayElement=False)
+                [code1, codeCleanup1] = generateExtensionObjectSubtypeCode(node.value[0], parent=parentNode, nodeset=nodeset,
+                                                                           global_var_code=codeGlobal, isArrayElement=False)
                 code = code + code1
                 codeCleanup = codeCleanup + codeCleanup1
             instanceName = generateNodeValueInstanceName(node.value[0], parentNode, 0)
-            if not(isinstance(node.value[0], ExtensionObject)):
+            if not node.value[0].isNone() and not(isinstance(node.value[0], ExtensionObject)):
                 code.append("UA_" + node.value[0].__class__.__name__ + " *" + valueName + " =  UA_" + node.value[
                     0].__class__.__name__ + "_new();")
                 code.append("if (!" + valueName + ") return UA_STATUSCODE_BADOUTOFMEMORY;")
-                code.append(generateNodeValueCode("*" + valueName + " = " , node.value[0], instanceName, valueName, codeGlobal, asIndirect=True))
+                code.append("UA_" + node.value[0].__class__.__name__ + "_init(" + valueName + ");")
+                code.append(generateNodeValueCode("*" + valueName, node.value[0], instanceName, valueName, codeGlobal, asIndirect=True))
                 code.append(
                         "UA_Variant_setScalar(&attr.value, " + valueName + ", " +
                         getTypesArrayForValue(nodeset, node.value[0]) + ");")

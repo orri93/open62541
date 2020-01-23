@@ -69,12 +69,32 @@ UA_Client_Subscriptions_create(UA_Client *client,
                                UA_Client_StatusChangeNotificationCallback statusChangeCallback,
                                UA_Client_DeleteSubscriptionCallback deleteCallback);
 
+UA_StatusCode UA_EXPORT
+UA_Client_Subscriptions_create_async(
+    UA_Client *client, const UA_CreateSubscriptionRequest request,
+    void *subscriptionContext,
+    UA_Client_StatusChangeNotificationCallback statusChangeCallback,
+    UA_Client_DeleteSubscriptionCallback deleteCallback,
+    UA_ClientAsyncServiceCallback callback, void *userdata, UA_UInt32 *requestId);
+
 UA_ModifySubscriptionResponse UA_EXPORT
 UA_Client_Subscriptions_modify(UA_Client *client, const UA_ModifySubscriptionRequest request);
+
+UA_StatusCode UA_EXPORT
+UA_Client_Subscriptions_modify_async(UA_Client *client,
+                                     const UA_ModifySubscriptionRequest request,
+                                     UA_ClientAsyncServiceCallback callback,
+                                     void *userdata, UA_UInt32 *requestId);
 
 UA_DeleteSubscriptionsResponse UA_EXPORT
 UA_Client_Subscriptions_delete(UA_Client *client,
                                const UA_DeleteSubscriptionsRequest request);
+
+UA_StatusCode UA_EXPORT
+UA_Client_Subscriptions_delete_async(UA_Client *client,
+                                     const UA_DeleteSubscriptionsRequest request,
+                                     UA_ClientAsyncServiceCallback callback,
+                                     void *userdata, UA_UInt32 *requestId);
 
 /* Delete a single subscription */
 UA_StatusCode UA_EXPORT
@@ -99,8 +119,8 @@ UA_Client_Subscriptions_setPublishingMode(UA_Client *client,
  * forward Event notifications from that node.
  *
  * During the creation of a MonitoredItem, the server may return changed
- * adjusted parameters. Use ``UA_Client_MonitoredItem_getParameters`` to get the
- * current parameters. */
+ * adjusted parameters. Check the returned ``UA_CreateMonitoredItemsResponse``
+ * to get the current parameters. */
 
 /* Provides default values for a new monitored item. */
 static UA_INLINE UA_MonitoredItemCreateRequest
@@ -115,6 +135,10 @@ UA_MonitoredItemCreateRequest_default(UA_NodeId nodeId) {
     request.requestedParameters.queueSize = 1;
     return request;
 }
+
+/**
+ * The clientHandle parameter can't be set by the user, any value will be replaced
+ * by the client before sending the request to the server. */
 
 /* Callback for the deletion of a MonitoredItem */
 typedef void (*UA_Client_DeleteMonitoredItemCallback)
@@ -140,6 +164,13 @@ UA_Client_MonitoredItems_createDataChanges(UA_Client *client,
             UA_Client_DataChangeNotificationCallback *callbacks,
             UA_Client_DeleteMonitoredItemCallback *deleteCallbacks);
 
+UA_StatusCode UA_EXPORT
+UA_Client_MonitoredItems_createDataChanges_async(
+    UA_Client *client, const UA_CreateMonitoredItemsRequest request, void **contexts,
+    UA_Client_DataChangeNotificationCallback *callbacks,
+    UA_Client_DeleteMonitoredItemCallback *deleteCallbacks,
+    UA_ClientAsyncServiceCallback createCallback, void *userdata, UA_UInt32 *requestId);
+
 UA_MonitoredItemCreateResult UA_EXPORT
 UA_Client_MonitoredItems_createDataChange(UA_Client *client, UA_UInt32 subscriptionId,
           UA_TimestampsToReturn timestampsToReturn, const UA_MonitoredItemCreateRequest item,
@@ -153,6 +184,14 @@ UA_Client_MonitoredItems_createEvents(UA_Client *client,
             UA_Client_EventNotificationCallback *callback,
             UA_Client_DeleteMonitoredItemCallback *deleteCallback);
 
+/* Monitor the EventNotifier attribute only */
+UA_StatusCode UA_EXPORT
+UA_Client_MonitoredItems_createEvents_async(
+    UA_Client *client, const UA_CreateMonitoredItemsRequest request, void **contexts,
+    UA_Client_EventNotificationCallback *callbacks,
+    UA_Client_DeleteMonitoredItemCallback *deleteCallbacks,
+    UA_ClientAsyncServiceCallback createCallback, void *userdata, UA_UInt32 *requestId);
+
 UA_MonitoredItemCreateResult UA_EXPORT
 UA_Client_MonitoredItems_createEvent(UA_Client *client, UA_UInt32 subscriptionId,
           UA_TimestampsToReturn timestampsToReturn, const UA_MonitoredItemCreateRequest item,
@@ -163,21 +202,23 @@ UA_DeleteMonitoredItemsResponse UA_EXPORT
 UA_Client_MonitoredItems_delete(UA_Client *client, const UA_DeleteMonitoredItemsRequest);
 
 UA_StatusCode UA_EXPORT
-UA_Client_MonitoredItems_deleteSingle(UA_Client *client, UA_UInt32 subscriptionId, UA_UInt32 monitoredItemId);
+UA_Client_MonitoredItems_delete_async(UA_Client *client,
+                                      const UA_DeleteMonitoredItemsRequest request,
+                                      UA_ClientAsyncServiceCallback callback,
+                                      void *userdata, UA_UInt32 *requestId);
+
+UA_StatusCode UA_EXPORT
+UA_Client_MonitoredItems_deleteSingle(UA_Client *client, UA_UInt32 subscriptionId,
+                                      UA_UInt32 monitoredItemId);
+
+/* The clientHandle parameter will be filled automatically */
+UA_ModifyMonitoredItemsResponse UA_EXPORT
+UA_Client_MonitoredItems_modify(UA_Client *client,
+                                const UA_ModifyMonitoredItemsRequest request);
 
 /**
  * The following service calls go directly to the server. The MonitoredItem settings are
  * not stored in the client. */
-
-static UA_INLINE UA_ModifyMonitoredItemsResponse
-UA_Client_MonitoredItems_modify(UA_Client *client,
-                                const UA_ModifyMonitoredItemsRequest request) {
-    UA_ModifyMonitoredItemsResponse response;
-    __UA_Client_Service(client,
-                        &request, &UA_TYPES[UA_TYPES_MODIFYMONITOREDITEMSREQUEST],
-                        &response, &UA_TYPES[UA_TYPES_MODIFYMONITOREDITEMSRESPONSE]);
-    return response;
-}
 
 static UA_INLINE UA_SetMonitoringModeResponse
 UA_Client_MonitoredItems_setMonitoringMode(UA_Client *client,
@@ -197,6 +238,35 @@ UA_Client_MonitoredItems_setTriggering(UA_Client *client,
                         &request, &UA_TYPES[UA_TYPES_SETTRIGGERINGREQUEST],
                         &response, &UA_TYPES[UA_TYPES_SETTRIGGERINGRESPONSE]);
     return response;
+}
+
+static UA_INLINE UA_StatusCode
+UA_Client_MonitoredItems_modify_async(UA_Client *client,
+                                      const UA_ModifyMonitoredItemsRequest request,
+                                      UA_ClientAsyncServiceCallback callback,
+                                      void *userdata, UA_UInt32 *requestId) {
+    return __UA_Client_AsyncService(
+        client, &request, &UA_TYPES[UA_TYPES_MODIFYMONITOREDITEMSREQUEST], callback,
+        &UA_TYPES[UA_TYPES_MODIFYMONITOREDITEMSRESPONSE], userdata, requestId);
+}
+
+static UA_INLINE UA_StatusCode
+UA_Client_MonitoredItems_setMonitoringMode_async(
+    UA_Client *client, const UA_SetMonitoringModeRequest request,
+    UA_ClientAsyncServiceCallback callback, void *userdata, UA_UInt32 *requestId) {
+    return __UA_Client_AsyncService(
+        client, &request, &UA_TYPES[UA_TYPES_SETMONITORINGMODEREQUEST], callback,
+        &UA_TYPES[UA_TYPES_SETMONITORINGMODERESPONSE], userdata, requestId);
+}
+
+static UA_INLINE UA_StatusCode
+UA_Client_MonitoredItems_setTriggering_async(UA_Client *client,
+                                             const UA_SetTriggeringRequest request,
+                                             UA_ClientAsyncServiceCallback callback,
+                                             void *userdata, UA_UInt32 *requestId) {
+    return __UA_Client_AsyncService(
+        client, &request, &UA_TYPES[UA_TYPES_SETTRIGGERINGREQUEST], callback,
+        &UA_TYPES[UA_TYPES_SETTRIGGERINGRESPONSE], userdata, requestId);
 }
 
 #endif

@@ -43,6 +43,8 @@ UA_Subscription_new(UA_Session *session, UA_UInt32 subscriptionId) {
 
 void
 UA_Subscription_deleteMembers(UA_Server *server, UA_Subscription *sub) {
+    UA_LOCK_ASSERT(server->serviceMutex, 1);
+
     Subscription_unregisterPublishCallback(server, sub);
 
     /* Delete monitored Items */
@@ -63,7 +65,7 @@ UA_Subscription_deleteMembers(UA_Server *server, UA_Subscription *sub) {
     UA_NotificationMessageEntry *nme, *nme_tmp;
     TAILQ_FOREACH_SAFE(nme, &sub->retransmissionQueue, listEntry, nme_tmp) {
         TAILQ_REMOVE(&sub->retransmissionQueue, nme, listEntry);
-        UA_NotificationMessage_deleteMembers(&nme->message);
+        UA_NotificationMessage_clear(&nme->message);
         UA_free(nme);
         --sub->session->totalRetransmissionQueueSize;
         --sub->retransmissionQueueSize;
@@ -88,6 +90,8 @@ UA_Subscription_getMonitoredItem(UA_Subscription *sub, UA_UInt32 monitoredItemId
 UA_StatusCode
 UA_Subscription_deleteMonitoredItem(UA_Server *server, UA_Subscription *sub,
                                     UA_UInt32 monitoredItemId) {
+    UA_LOCK_ASSERT(server->serviceMutex, 1);
+
     /* Find the MonitoredItem */
     UA_MonitoredItem *mon;
     LIST_FOREACH(mon, &sub->monitoredItems, listEntry) {
@@ -142,7 +146,7 @@ removeOldestRetransmissionMessage(UA_Session *session) {
     UA_assert(oldestSub);
 
     TAILQ_REMOVE(&oldestSub->retransmissionQueue, oldestEntry, listEntry);
-    UA_NotificationMessage_deleteMembers(&oldestEntry->message);
+    UA_NotificationMessage_clear(&oldestEntry->message);
     UA_free(oldestEntry);
     --session->totalRetransmissionQueueSize;
     --oldestSub->retransmissionQueueSize;
@@ -180,7 +184,7 @@ UA_Subscription_removeRetransmissionMessage(UA_Subscription *sub, UA_UInt32 sequ
     TAILQ_REMOVE(&sub->retransmissionQueue, entry, listEntry);
     --sub->session->totalRetransmissionQueueSize;
     --sub->retransmissionQueueSize;
-    UA_NotificationMessage_deleteMembers(&entry->message);
+    UA_NotificationMessage_clear(&entry->message);
     UA_free(entry);
     return UA_STATUSCODE_GOOD;
 }
@@ -203,7 +207,7 @@ prepareNotificationMessage(UA_Server *server, UA_Subscription *sub,
     if(sub->dataChangeNotifications > 0) {
         dcn = UA_DataChangeNotification_new();
         if(!dcn) {
-            UA_NotificationMessage_deleteMembers(message);
+            UA_NotificationMessage_clear(message);
             return UA_STATUSCODE_BADOUTOFMEMORY;
         }
         message->notificationData->encoding = UA_EXTENSIONOBJECT_DECODED;
@@ -216,7 +220,7 @@ prepareNotificationMessage(UA_Server *server, UA_Subscription *sub,
         dcn->monitoredItems = (UA_MonitoredItemNotification*)
             UA_Array_new(dcnSize, &UA_TYPES[UA_TYPES_MONITOREDITEMNOTIFICATION]);
         if(!dcn->monitoredItems) {
-            UA_NotificationMessage_deleteMembers(message);
+            UA_NotificationMessage_clear(message);
             return UA_STATUSCODE_BADOUTOFMEMORY;
         }
         dcn->monitoredItemsSize = dcnSize;
@@ -231,7 +235,7 @@ prepareNotificationMessage(UA_Server *server, UA_Subscription *sub,
     if(sub->statusChangeNotifications > 0) {
         scn = UA_StatusChangeNotification_new();
         if(!scn) {
-            UA_NotificationMessage_deleteMembers(message);
+            UA_NotificationMessage_clear(message);
             return UA_STATUSCODE_BADOUTOFMEMORY;
         }
         message->notificationData[notificationDataIdx].encoding = UA_EXTENSIONOBJECT_DECODED;
@@ -241,7 +245,7 @@ prepareNotificationMessage(UA_Server *server, UA_Subscription *sub,
     } else if(sub->eventNotifications > 0) {
         enl = UA_EventNotificationList_new();
         if(!enl) {
-            UA_NotificationMessage_deleteMembers(message);
+            UA_NotificationMessage_clear(message);
             return UA_STATUSCODE_BADOUTOFMEMORY;
         }
         message->notificationData[notificationDataIdx].encoding = UA_EXTENSIONOBJECT_DECODED;
@@ -253,7 +257,7 @@ prepareNotificationMessage(UA_Server *server, UA_Subscription *sub,
             enlSize = notifications;
         enl->events = (UA_EventFieldList*) UA_Array_new(enlSize, &UA_TYPES[UA_TYPES_EVENTFIELDLIST]);
         if(!enl->events) {
-            UA_NotificationMessage_deleteMembers(message);
+            UA_NotificationMessage_clear(message);
             return UA_STATUSCODE_BADOUTOFMEMORY;
         }
         enl->eventsSize = enlSize;
@@ -282,20 +286,9 @@ prepareNotificationMessage(UA_Server *server, UA_Subscription *sub,
         UA_Notification_dequeue(server, notification);
 
         /* Move the content to the response */
-        if(mon->monitoredItemType == UA_MONITOREDITEMTYPE_CHANGENOTIFY) {
-            UA_assert(dcn != NULL); /* Have at least one change notification */
-            /* Move the content to the response */
-            UA_MonitoredItemNotification *min = &dcn->monitoredItems[dcnPos];
-            min->clientHandle = mon->clientHandle;
-            min->value = notification->data.value;
-            UA_DataValue_init(&notification->data.value); /* Reset after the value has been moved */
-            dcnPos++;
-        }
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
-        else if(mon->monitoredItemType == UA_MONITOREDITEMTYPE_STATUSNOTIFY && scn) {
-            // TODO: Handling of StatusChangeNotifications
-            scn = NULL; /* At most one per PublishReponse */
-        } else if(mon->monitoredItemType == UA_MONITOREDITEMTYPE_EVENTNOTIFY && enl) {
+        if(mon->attributeId == UA_ATTRIBUTEID_EVENTNOTIFIER) {
+
             UA_assert(enl != NULL); /* Have at least one event notification */
 
             /* Move the content to the response */
@@ -305,11 +298,16 @@ prepareNotificationMessage(UA_Server *server, UA_Subscription *sub,
             efl->clientHandle = mon->clientHandle;
 
             enlPos++;
-        }
+        } else
 #endif
-        else {
-            UA_Notification_delete(notification);
-            continue; /* Unknown type. Nothing to do */
+        {
+            UA_assert(dcn != NULL); /* Have at least one change notification */
+            /* Move the content to the response */
+            UA_MonitoredItemNotification *min = &dcn->monitoredItems[dcnPos];
+            min->clientHandle = mon->clientHandle;
+            min->value = notification->data.value;
+            UA_DataValue_init(&notification->data.value); /* Reset after the value has been moved */
+            dcnPos++;
         }
 
         UA_Notification_delete(notification);
@@ -351,11 +349,15 @@ UA_Subscription_nextSequenceNumber(UA_UInt32 sequenceNumber) {
 static void
 publishCallback(UA_Server *server, UA_Subscription *sub) {
     sub->readyNotifications = sub->notificationQueueSize;
+    UA_LOCK(server->serviceMutex);
     UA_Subscription_publish(server, sub);
+    UA_UNLOCK(server->serviceMutex);
 }
 
 void
 UA_Subscription_publish(UA_Server *server, UA_Subscription *sub) {
+    UA_LOCK_ASSERT(server->serviceMutex, 1);
+
     UA_LOG_DEBUG_SESSION(&server->config.logger, sub->session, "Subscription %u | "
                          "Publish Callback", sub->subscriptionId);
     /* Dequeue a response */
@@ -511,7 +513,7 @@ UA_Subscription_publish(UA_Server *server, UA_Subscription *sub) {
 
     /* Free the response */
     UA_Array_delete(response->results, response->resultsSize, &UA_TYPES[UA_TYPES_UINT32]);
-    UA_free(pre); /* No need for UA_PublishResponse_deleteMembers */
+    UA_free(pre); /* No need for UA_PublishResponse_clear */
 
     /* Repeat sending responses if there are more notifications to send */
     if(moreNotifications)
@@ -554,7 +556,7 @@ UA_Subscription_reachedPublishReqLimit(UA_Server *server,  UA_Session *session) 
 
     /* Free the response */
     UA_Array_delete(response->results, response->resultsSize, &UA_TYPES[UA_TYPES_UINT32]);
-    UA_free(pre); /* no need for UA_PublishResponse_deleteMembers */
+    UA_free(pre); /* no need for UA_PublishResponse_clear */
 
     return true;
 }
@@ -564,13 +566,14 @@ Subscription_registerPublishCallback(UA_Server *server, UA_Subscription *sub) {
     UA_LOG_DEBUG_SESSION(&server->config.logger, sub->session,
                          "Subscription %u | Register subscription "
                          "publishing callback", sub->subscriptionId);
+    UA_LOCK_ASSERT(server->serviceMutex, 1);
 
     if(sub->publishCallbackIsRegistered)
         return UA_STATUSCODE_GOOD;
 
     UA_StatusCode retval =
-        UA_Server_addRepeatedCallback(server, (UA_ServerCallback)publishCallback,
-                                      sub, (UA_UInt32)sub->publishingInterval, &sub->publishCallbackId);
+        addRepeatedCallback(server, (UA_ServerCallback)publishCallback,
+                            sub, (UA_UInt32)sub->publishingInterval, &sub->publishCallbackId);
     if(retval != UA_STATUSCODE_GOOD)
         return retval;
 
@@ -586,7 +589,7 @@ Subscription_unregisterPublishCallback(UA_Server *server, UA_Subscription *sub) 
     if(!sub->publishCallbackIsRegistered)
         return;
 
-    UA_Server_removeRepeatedCallback(server, sub->publishCallbackId);
+    removeCallback(server, sub->publishCallbackId);
     sub->publishCallbackIsRegistered = false;
 }
 
@@ -606,7 +609,7 @@ UA_Subscription_answerPublishRequestsNoSubscription(UA_Server *server, UA_Sessio
         response->responseHeader.timestamp = UA_DateTime_now();
         UA_SecureChannel_sendSymmetricMessage(session->header.channel, pre->requestId, UA_MESSAGETYPE_MSG,
                                               response, &UA_TYPES[UA_TYPES_PUBLISHRESPONSE]);
-        UA_PublishResponse_deleteMembers(response);
+        UA_PublishResponse_clear(response);
         UA_free(pre);
     }
 }

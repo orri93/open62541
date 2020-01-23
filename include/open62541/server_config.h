@@ -12,6 +12,7 @@
 #define UA_SERVER_CONFIG_H_
 
 #include <open62541/plugin/accesscontrol.h>
+#include <open62541/plugin/nodestore.h>
 #include <open62541/plugin/log.h>
 #include <open62541/plugin/network.h>
 #include <open62541/plugin/pki.h>
@@ -63,33 +64,48 @@ typedef struct {
 #ifdef UA_ENABLE_DISCOVERY
 typedef struct {
 
-	/* Timeout in seconds when to automatically remove a registered server from
-	 * the list, if it doesn't re-register within the given time frame. A value
-	 * of 0 disables automatic removal. Default is 60 Minutes (60*60). Must be
-	 * bigger than 10 seconds, because cleanup is only triggered approximately
-	 * every 10 seconds. The server will still be removed depending on the
-	 * state of the semaphore file. */
-	UA_UInt32 cleanupTimeout;
+    /* Timeout in seconds when to automatically remove a registered server from
+     * the list, if it doesn't re-register within the given time frame. A value
+     * of 0 disables automatic removal. Default is 60 Minutes (60*60). Must be
+     * bigger than 10 seconds, because cleanup is only triggered approximately
+     * every 10 seconds. The server will still be removed depending on the
+     * state of the semaphore file. */
+    UA_UInt32 cleanupTimeout;
 
-	/* Enable mDNS announce and response to queries */
-	bool mdnsEnable;
+    /* Enable mDNS announce and response to queries */
+    bool mdnsEnable;
 
 #ifdef UA_ENABLE_DISCOVERY_MULTICAST
-	UA_MdnsDiscoveryConfiguration mdns;
+    UA_MdnsDiscoveryConfiguration mdns;
+    UA_String mdnsInterfaceIP;
+# if !defined(UA_HAS_GETIFADDR)
+    uint32_t *ipAddressList;
+    size_t ipAddressListSize;
+# endif
 #endif
 
 } UA_ServerConfig_Discovery;
 
 #endif
 
+typedef void
+(*UA_Server_AsyncOperationNotifyCallback)(UA_Server *server);
+
 struct UA_ServerConfig {
     UA_UInt16 nThreads; /* only if multithreading is enabled */
     UA_Logger logger;
 
-    /* Server Description */
+    /* Server Description:
+     * The description must be internally consistent.
+     * - The ApplicationUri set in the ApplicationDescription must match the
+     *   URI set in the server certificate */
     UA_BuildInfo buildInfo;
     UA_ApplicationDescription applicationDescription;
     UA_ByteString serverCertificate;
+
+    UA_Double shutdownDelay; /* Delay in ms from the shutdown signal (ctrl-c)
+                                until the actual shutdown. Clients need to be
+                                able to get a notification ahead of time. */
 
     /* Rule Handling */
     UA_RuleHandling verifyRequestTimestamp; /* Verify that the server sends a
@@ -134,6 +150,21 @@ struct UA_ServerConfig {
     /**
      * .. note:: See the section for :ref:`access-control
      *    handling<access-control>`. */
+
+    /* Async Operations */
+#if UA_MULTITHREADING >= 100
+    UA_Double asyncOperationTimeout; /* in ms, 0 => unlimited */
+    size_t maxAsyncOperationQueueSize; /* 0 => unlimited */
+    UA_Double asyncCallRequestTimeout UA_DEPRECATED; /* in ms, 0 => unlimited */
+    /* Notify workers when an async operation was enqueued */
+    UA_Server_AsyncOperationNotifyCallback asyncOperationNotifyCallback;
+#endif
+    /**
+     * .. note:: See the section for :ref:`async
+     * operations<async-operations>`. */
+
+    /* Nodestore */
+    UA_Nodestore nodestore;
 
     /* Certificate Verification */
     UA_CertificateVerification certificateVerification;
@@ -188,7 +219,7 @@ struct UA_ServerConfig {
 
     /* Discovery */
 #ifdef UA_ENABLE_DISCOVERY
-	UA_ServerConfig_Discovery discovery;
+    UA_ServerConfig_Discovery discovery;
 #endif
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS

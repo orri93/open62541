@@ -16,7 +16,7 @@
 
 _UA_BEGIN_DECLS
 
-extern const UA_ByteString UA_SECURITY_POLICY_NONE_URI;
+extern UA_EXPORT const UA_ByteString UA_SECURITY_POLICY_NONE_URI;
 
 struct UA_SecurityPolicy;
 typedef struct UA_SecurityPolicy UA_SecurityPolicy;
@@ -358,7 +358,7 @@ struct UA_SecurityPolicy {
                                                     const UA_ByteString newPrivateKey);
 
     /* Deletes the dynamic content of the policy */
-    void (*deleteMembers)(UA_SecurityPolicy *policy);
+    void (*clear)(UA_SecurityPolicy *policy);
 };
 
 /* Gets the number of bytes that are needed by the encryption function in
@@ -383,7 +383,7 @@ UA_SecurityPolicy_getRemoteAsymEncryptionBufferLengthOverhead(const UA_SecurityP
  * @param securityPolicyUri the security policy to get the context of. */
 UA_SecurityPolicy *
 UA_SecurityPolicy_getSecurityPolicyByUri(const UA_Server *server,
-                                         UA_ByteString *securityPolicyUri);
+                                         const UA_ByteString *securityPolicyUri);
 
 _UA_END_DECLS
 

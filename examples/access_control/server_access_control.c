@@ -61,9 +61,9 @@ int main(void) {
     UA_ServerConfig_setDefault(config);
 
     /* Disable anonymous logins, enable two user/password logins */
-    config->accessControl.deleteMembers(&config->accessControl);
-    UA_StatusCode retval = UA_AccessControl_default(&config->accessControl,
-                                                    false, 2, logins);
+    config->accessControl.clear(&config->accessControl);
+    UA_StatusCode retval = UA_AccessControl_default(config, false,
+             &config->securityPolicies[config->securityPoliciesSize-1].policyUri, 2, logins);
     if(retval != UA_STATUSCODE_GOOD)
         goto cleanup;
 
